@@ -120,11 +120,23 @@ Simple rule: if there's latency, lower **scale** first (most impact), then **fps
 
 ### Live monitor switching
 
-With more than one monitor connected, the web page shows **buttons in the top-left corner** to switch monitors without reloading or taking off the headset. The capture restarts on the fly, near-instantly (~0.2–0.3s), and works even on a static/idle monitor (no need to move anything on it first).
+With more than one monitor connected, the web page shows **buttons centered at the top** to switch monitors without reloading or taking off the headset. The capture restarts on the fly, near-instantly (~0.2–0.3s), and works even on a static/idle monitor (no need to move anything on it first).
 
 > The buttons only appear when 2+ monitors are detected. With a single monitor the bar is hidden so it doesn't get in the way. You can also pick the monitor at launch with `--output`.
 
 Only one monitor is captured at a time (one `wf-recorder` process), so switching costs nothing extra in CPU or bandwidth — it just relaunches the capture on the chosen output.
+
+### On-screen controls
+
+All controls are nearly invisible by default and fade in on hover, so they don't obstruct the stream.
+
+| Button | Position | Action |
+|--------|----------|--------|
+| Eye icon | top-left | Hide / show all controls (toggle) |
+| Monitor buttons | top-center | Switch monitor (only shown with 2+ monitors) |
+| Fullscreen icon | top-right | Enter fullscreen; changes to an exit icon while in fullscreen |
+
+When controls are hidden via the eye button, the eye itself stays slightly visible so you can bring them back.
 
 ## Examples
 
@@ -182,7 +194,7 @@ Typical combo: `./start.sh --scale 720 --fps 15 --quality 8`
 Lower `--quality` (e.g. `--quality 2`) for better quality, and add `--sharp` for crisp text (4:4:4 chroma). Note both increase data and latency.
 
 **I want to capture a specific monitor**
-Use `--output` with the monitor name, or switch live from the web buttons. Run `wf-recorder -L` to see the available outputs.
+Use `--output` with the monitor name, or switch live from the monitor buttons at the top of the page. Run `wf-recorder -L` to see the available outputs.
 
 **Black screen / wrong monitor / it shows the same after switching**
 This means more than one `wf-recorder` is capturing at once (leftover processes from previous runs). On wlroots, multiple simultaneous captures fight over the screen and the newest one gets no frames. `start.sh` now cleans up orphaned captures on launch, and the server kills its own capture on exit, so this shouldn't recur. To check/clean up manually:
