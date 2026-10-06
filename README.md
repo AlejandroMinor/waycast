@@ -1,32 +1,32 @@
 # waycast
 
-Stream your Wayland desktop to any browser over the local network — built for the Meta Quest headset browser, but works anywhere. Nothing to install on the client.
+Stream your Wayland desktop to any browser over the local network, built for the Meta Quest headset browser, but works anywhere. Nothing to install on the client.
 
 Works on **any wlroots-based compositor**: Hyprland, Sway, river, Wayfire, etc. (it uses the `wlr-screencopy` protocol via `wf-recorder`, nothing compositor-specific).
 
 ## How it works
 
 ```
-Wayland (wlroots) → wf-recorder (native MJPEG) → HTTP server → any browser
+Wayland (wlroots), wf-recorder (native MJPEG), HTTP server, any browser
 ```
 
-A single capture process, no ffmpeg subprocess per frame — `wf-recorder` encodes MJPEG directly for minimal latency. A tiny Python server (stdlib only) serves a `multipart/x-mixed-replace` MJPEG stream that any browser can open, including the one built into the Quest.
+A single capture process, no ffmpeg subprocess per frame; `wf-recorder` encodes MJPEG directly for minimal latency. A tiny Python server (stdlib only) serves a `multipart/x-mixed-replace` MJPEG stream that any browser can open, including the one built into the Quest.
 
 ## Features
 
-- **Low latency** — direct MJPEG, no transcoding, `TCP_NODELAY` + small send buffer so stale frames get skipped instead of queued.
-- **Tunable** — `--fps`, `--quality`, `--scale`, `--chroma`, `--sharp` to trade quality for latency.
-- **Live monitor switching** — pick the output from the web page, no reload, near-instant.
-- **Password protected** — HTTP Basic auth, random password by default.
-- **Single dependency** — `wf-recorder` (plus Python stdlib). No npm, no install on the headset.
+- **Low latency**: direct MJPEG, no transcoding, `TCP_NODELAY` + small send buffer so stale frames get skipped instead of queued.
+- **Tunable**: `--fps`, `--quality`, `--scale`, `--chroma`, `--sharp` to trade quality for latency.
+- **Live monitor switching**: pick the output from the web page, no reload, near-instant.
+- **Password protected**: HTTP Basic auth, random password by default.
+- **Single dependency**: `wf-recorder` (plus Python stdlib). No npm, no install on the headset.
 
 ## Requirements & installation
 
 | | Needs |
 |---|---|
-| **OS** | Linux with either a wlroots Wayland compositor (Hyprland, Sway, river, labwc, Wayfire, …) or an X11 session (`--backend x11`). **GNOME, KDE Plasma and COSMIC are not supported** — they don't implement `wlr-screencopy`, the protocol the `wlr` backend captures through. The distro doesn't matter, the compositor does. |
+| **OS** | Linux with either a wlroots Wayland compositor (Hyprland, Sway, river, labwc, Wayfire, …) or an X11 session (`--backend x11`). **GNOME, KDE Plasma and COSMIC are not supported**: they don't implement `wlr-screencopy`, the protocol the `wlr` backend captures through. The distro doesn't matter, the compositor does. |
 | **Capture** | `wf-recorder` (tested with 0.6.0; any version where `wf-recorder -L` works) for `wlr`, or `ffmpeg` for `x11` |
-| **Server** | Python ≥ 3.8 (stdlib only — nothing to `pip install`) |
+| **Server** | Python ≥ 3.8 (stdlib only, nothing to `pip install`) |
 | **Client** | Any browser that plays MJPEG: Chrome / Edge / Firefox and the Meta Quest browser |
 | **Network** | Quest and PC on the same LAN; 5 GHz Wi-Fi recommended |
 
@@ -84,9 +84,9 @@ The Quest and your PC must be on the same Wi-Fi network. `start.sh` checks the d
 
 If you don't pass `--password`, one is generated automatically and shown in the terminal at startup.
 
-> **Security — local network only.** This serves over plain HTTP, so the password travels Base64-encoded but **unencrypted** (HTTP Basic auth). It's meant for your own trusted LAN. Don't expose port `8080` to the internet or forward it through your router — anyone on the path could read the stream and the password. If you ever need remote access, tunnel it (e.g. over SSH or a VPN) instead of opening the port.
+> **Security: local network only.** This serves over plain HTTP, so the password travels Base64-encoded but **unencrypted** (HTTP Basic auth). It's meant for your own trusted LAN. Don't expose port `8080` to the internet or forward it through your router; anyone on the path could read the stream and the password. If you ever need remote access, tunnel it (e.g. over SSH or a VPN) instead of opening the port.
 
-> **Note on `--quality`:** the real control is the encoder's `qmin`/`qmax` quantizer. The `qscale` option many examples use is **ignored** by ffmpeg's MJPEG encoder — that's why changing it has no effect.
+> **Note on `--quality`:** the real control is the encoder's `qmin`/`qmax` quantizer. The `qscale` option many examples use is **ignored** by ffmpeg's MJPEG encoder; that's why changing it has no effect.
 
 ### `--quality` (image compression)
 
@@ -96,7 +96,7 @@ It's a quantizer, so it works inversely to what you'd expect:
 |--------|--------------|-------------------------|
 | `1`    | best         | heavy, more latency     |
 | `4`    | good (default) | balanced              |
-| `8–10` | acceptable   | light, less latency     |
+| `8-10` | acceptable   | light, less latency     |
 | `31`   | worst        | minimal                 |
 
 Rule: **lower number = looks better but weighs more** (more latency). **Higher number = looks worse but runs smoother.**
@@ -113,7 +113,7 @@ The value is the final **height in pixels**; the width is computed automatically
 | `540`     | 960x540           | very light, noticeably soft           |
 | `480`     | 854x480           | minimum, only if Wi-Fi is bad         |
 
-Useful range: **480 to 1080**. Don't go above your native height (1080) — it adds no detail, just inflates the data. This is the strongest lever against latency because it attacks the root cause (amount of data), not just compression.
+Useful range: **480 to 1080**. Don't go above your native height (1080), since it adds no detail, just inflates the data. This is the strongest lever against latency because it attacks the root cause (amount of data), not just compression.
 
 ### `--chroma` (color sharpness)
 
@@ -125,7 +125,7 @@ JPEG stores chroma subsampled; that's what makes colored text edges and thin UI 
 | `422`  | `yuvj422p`   | **+12%**      | sharper colored text, small cost |
 | `444`  | `yuvj444p`   | **+35%**      | crisp text (`--sharp` is an alias for this) |
 
-Measured at 1920x1080, `--quality 4`: 284 KB → 318 KB → 383 KB per frame. More data means more latency over Wi-Fi, so prefer `420`/`422` unless text sharpness matters more than responsiveness.
+Measured at 1920x1080, `--quality 4`: 284 KB, 318 KB, 383 KB per frame. More data means more latency over Wi-Fi, so prefer `420`/`422` unless text sharpness matters more than responsiveness.
 
 ### `--fps` (frames per second)
 
@@ -139,7 +139,7 @@ Each frame is a full JPEG, so the cost is direct: **double the fps = double the 
 | `25`    | smoother scrolling and mouse           | ~48 Mbps |
 | `30`    | smooth motion, still light             | ~56 Mbps |
 
-Useful range: **10 to 30**. Measured here: `wf-recorder` sustains 29.8 fps at `-r 30` (19.8 at `-r 20`), and the cost is mostly data, not CPU (226% vs 216% of a single core — the capture itself dominates). The figures above are for a mostly static desktop; **screen content matters more than anything else here** — a text-heavy screen at 20 fps costs ~70 Mbps and at 30 fps ~85 Mbps. Even the worst case stays around 15–20% of a 600 Mbps 5 GHz link.
+Useful range: **10 to 30**. Measured here: `wf-recorder` sustains 29.8 fps at `-r 30` (19.8 at `-r 20`), and the cost is mostly data, not CPU (226% vs 216% of a single core; the capture itself dominates). The figures above are for a mostly static desktop; **screen content matters more than anything else here**: a text-heavy screen at 20 fps costs ~70 Mbps and at 30 fps ~85 Mbps. Even the worst case stays around 15-20% of a 600 Mbps 5 GHz link.
 
 ### `--backend` (capture backend)
 
@@ -147,13 +147,13 @@ Capture is abstracted behind a `CaptureBackend` interface (`backends.py`), so th
 
 | Value  | Capturer | Needs | Works on |
 |--------|----------|-------|----------|
-| `auto` | detect from the environment (default) | — | — |
+| `auto` | detect from the environment (default) | - | - |
 | `wlr`  | `wf-recorder` over `wlr-screencopy` | `wf-recorder` | Hyprland, Sway, river, labwc, Wayfire |
-| `x11`  | `ffmpeg -f x11grab` → MJPEG pipe | `ffmpeg` | any X11 session |
+| `x11`  | `ffmpeg -f x11grab`, MJPEG pipe | `ffmpeg` | any X11 session |
 
 `auto` picks `wlr` when `WAYLAND_DISPLAY` (or `XDG_SESSION_TYPE=wayland`) is set, otherwise `x11`. Monitor switching and the `--output`/`--scale`/`--quality`/`--chroma` options behave the same on both.
 
-Not supported yet: **GNOME, KDE Plasma and COSMIC** — they don't implement `wlr-screencopy` (KWin closed their bug as `RESOLVED INTENTIONAL`), so they need the xdg-desktop-portal backend, which isn't implemented.
+Not supported yet: **GNOME, KDE Plasma and COSMIC**: they don't implement `wlr-screencopy` (KWin closed their bug as `RESOLVED INTENTIONAL`), so they need the xdg-desktop-portal backend, which isn't implemented.
 
 ### Combining the levers
 
@@ -174,18 +174,18 @@ Measured on this machine (native capture, `--fps 20 --quality 4`, client on the 
 | Stage | Time |
 |---|---|
 | `wf-recorder` capture + MJPEG encode (frame complete in the pipe) | **~85 ms** |
-| server parse → publish → TCP send → client receive | **~1 ms** |
+| server parse, publish, TCP send, client receive | **~1 ms** |
 | browser decode/render | client side |
 
-The server part is a rounding error: each frame is published as soon as its bytes arrive (no waiting for the next frame, no missed wakeups between frames) and the socket send buffer only holds 1–2 frames. So end-to-end latency is essentially **the capture floor plus the network**, and the levers below (`--scale`, `--quality`, `--fps`) are what actually move it.
+The server part is a rounding error: each frame is published as soon as its bytes arrive (no waiting for the next frame, no missed wakeups between frames) and the socket send buffer only holds 1-2 frames. So end-to-end latency is essentially **the capture floor plus the network**, and the levers below (`--scale`, `--quality`, `--fps`) are what actually move it.
 
 ### Live monitor switching
 
-With more than one monitor connected, the web page shows **buttons centered at the top** to switch monitors without reloading or taking off the headset. The capture restarts on the fly, near-instantly (~0.2–0.3s), and works even on a static/idle monitor (no need to move anything on it first).
+With more than one monitor connected, the web page shows **buttons centered at the top** to switch monitors without reloading or taking off the headset. The capture restarts on the fly, near-instantly (~0.2-0.3s), and works even on a static/idle monitor (no need to move anything on it first).
 
 > The buttons only appear when 2+ monitors are detected. With a single monitor the bar is hidden so it doesn't get in the way. You can also pick the monitor at launch with `--output`.
 
-Only one monitor is captured at a time (one `wf-recorder` process), so switching costs nothing extra in CPU or bandwidth — it just relaunches the capture on the chosen output.
+Only one monitor is captured at a time (one `wf-recorder` process), so switching costs nothing extra in CPU or bandwidth; it just relaunches the capture on the chosen output.
 
 ### On-screen controls
 
@@ -201,17 +201,17 @@ When controls are hidden via the eye button, the eye itself stays slightly visib
 
 ## Examples
 
-Start from the row that matches what you're doing — these are the setups worth actually using:
+Start from the row that matches what you're doing; these are the setups worth actually using:
 
 | Use case | Command | Data (measured) |
 |---|---|---|
-| Everyday / balanced | `./start.sh` | ~40–70 Mbps |
+| Everyday / balanced | `./start.sh` | ~40-70 Mbps |
 | Reading, static text, weak Wi-Fi | `./start.sh --fps 15 --quality 6` | ~35 Mbps |
-| **Programming from the headset** (crispest text) | `./start.sh --chroma 444 --quality 2 --fps 25` | ~70–125 Mbps |
-| Maximum smoothness (scroll, video, motion) | `./start.sh --fps 30` | ~56–85 Mbps |
+| **Programming from the headset** (crispest text) | `./start.sh --chroma 444 --quality 2 --fps 25` | ~70-125 Mbps |
+| Maximum smoothness (scroll, video, motion) | `./start.sh --fps 30` | ~56-85 Mbps |
 | Crowded / slow Wi-Fi | `./start.sh --scale 720 --fps 15 --quality 8` | ~10 Mbps |
 
-*Measured at native 2560x1440 — a 1080p screen uses roughly half. The range is screen content: a mostly static desktop at the low end, a text-heavy screen at the high end (text is the expensive case for JPEG). Everything above fits a 600 Mbps 5 GHz link with room to spare.*
+*Measured at native 2560x1440, so a 1080p screen uses roughly half. The range is screen content: a mostly static desktop at the low end, a text-heavy screen at the high end (text is the expensive case for JPEG). Everything above fits a 600 Mbps 5 GHz link with room to spare.*
 
 Pick your monitor with `--output` (or from the buttons in the page), and fix the password with `--password` so it doesn't change on every launch.
 
@@ -269,13 +269,13 @@ python3 -m unittest discover -s tests
 ## Troubleshooting
 
 **Black screen when opening the URL**
-Run `./start.sh` from a terminal inside your Wayland session. Make sure `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` are set — it won't work over SSH without display forwarding.
+Run `./start.sh` from a terminal inside your Wayland session. Make sure `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` are set; it won't work over SSH without display forwarding.
 
 **High latency / the image keeps falling further behind**
 With MJPEG over TCP, if Wi-Fi can't keep up the frames pile up and latency grows without bound. In order of impact:
-1. `--scale 720` (or `--scale 900`) — lower the resolution, the biggest data saving.
-2. `--quality 8` or higher — lighter frames.
-3. `--fps 15` — fewer frames per second.
+1. `--scale 720` (or `--scale 900`): lower the resolution, the biggest data saving.
+2. `--quality 8` or higher: lighter frames.
+3. `--fps 15`: fewer frames per second.
 4. Move the PC closer to the router or use 5 GHz.
 
 Typical combo: `./start.sh --scale 720 --fps 15 --quality 8`
