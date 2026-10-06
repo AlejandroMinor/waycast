@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 set -e
 
-for dep in wf-recorder python3; do
+REQ=wf-recorder
+for ((i = 1; i <= $#; i++)); do
+  if [[ "${!i}" == "--backend" ]]; then
+    j=$((i + 1))
+    if [[ "${!j}" == "x11" ]]; then
+      REQ=ffmpeg
+    fi
+  elif [[ "${!i}" == "--backend=x11" ]]; then
+    REQ=ffmpeg
+  fi
+done
+
+for dep in "$REQ" python3; do
   if ! command -v "$dep" &>/dev/null; then
     echo "Error: '$dep' is not installed."
     exit 1

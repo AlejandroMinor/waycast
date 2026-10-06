@@ -24,8 +24,8 @@ A single capture process, no ffmpeg subprocess per frame — `wf-recorder` encod
 
 | | Needs |
 |---|---|
-| **OS** | Linux + Wayland on a wlroots compositor (Hyprland, Sway, river, labwc, Wayfire, …). **X11 is not supported**, and neither are **GNOME, KDE Plasma or COSMIC** — they don't implement `wlr-screencopy`, the protocol `wf-recorder` captures through. The distro doesn't matter, the compositor does. |
-| **Capture** | `wf-recorder` (tested with 0.6.0; any version where `wf-recorder -L` works) |
+| **OS** | Linux with either a wlroots Wayland compositor (Hyprland, Sway, river, labwc, Wayfire, …) or an X11 session (`--backend x11`). **GNOME, KDE Plasma and COSMIC are not supported** — they don't implement `wlr-screencopy`, the protocol the `wlr` backend captures through. The distro doesn't matter, the compositor does. |
+| **Capture** | `wf-recorder` (tested with 0.6.0; any version where `wf-recorder -L` works) for `wlr`, or `ffmpeg` for `x11` |
 | **Server** | Python ≥ 3.8 (stdlib only — nothing to `pip install`) |
 | **Client** | Any browser that plays MJPEG: Chrome / Edge / Firefox and the Meta Quest browser |
 | **Network** | Quest and PC on the same LAN; 5 GHz Wi-Fi recommended |
@@ -67,7 +67,7 @@ The Quest and your PC must be on the same Wi-Fi network. `start.sh` checks the d
 ## Parameters
 
 ```bash
-./start.sh [--fps N] [--quality N] [--port N] [--output NAME] [--scale N] [--chroma 420|422|444] [--sharp] [--password PASS]
+./start.sh [--fps N] [--quality N] [--port N] [--output NAME] [--scale N] [--chroma 420|422|444] [--sharp] [--password PASS] [--backend auto|wlr|x11]
 ```
 
 | Parameter      | Default      | Description                                          |
@@ -80,6 +80,7 @@ The Quest and your PC must be on the same Wi-Fi network. `start.sh` checks the d
 | `--chroma`     | `420`        | Chroma subsampling: `420` default, `422` sharper color (+12% data), `444` full (= `--sharp`) |
 | `--sharp`      | off          | Alias for `--chroma 444`: sharpest text at the cost of ~35% more data |
 | `--password`   | random       | Access password for the stream                       |
+| `--backend`    | `auto`       | Capture backend: `auto` = detect, `wlr` = wf-recorder, `x11` = ffmpeg x11grab |
 
 If you don't pass `--password`, one is generated automatically and shown in the terminal at startup.
 
@@ -139,6 +140,20 @@ Each frame is a full JPEG, so the cost is direct: **double the fps = double the 
 | `30`    | smooth motion, still light             | ~56 Mbps |
 
 Useful range: **10 to 30**. Measured here: `wf-recorder` sustains 29.8 fps at `-r 30` (19.8 at `-r 20`), and the cost is mostly data, not CPU (226% vs 216% of a single core — the capture itself dominates). The figures above are for a mostly static desktop; **screen content matters more than anything else here** — a text-heavy screen at 20 fps costs ~70 Mbps and at 30 fps ~85 Mbps. Even the worst case stays around 15–20% of a 600 Mbps 5 GHz link.
+
+### `--backend` (capture backend)
+
+Capture is abstracted behind a `CaptureBackend` interface (`backends.py`), so the server does not depend on a single tool:
+
+| Value  | Capturer | Needs | Works on |
+|--------|----------|-------|----------|
+| `auto` | detect from the environment (default) | — | — |
+| `wlr`  | `wf-recorder` over `wlr-screencopy` | `wf-recorder` | Hyprland, Sway, river, labwc, Wayfire |
+| `x11`  | `ffmpeg -f x11grab` → MJPEG pipe | `ffmpeg` | any X11 session |
+
+`auto` picks `wlr` when `WAYLAND_DISPLAY` (or `XDG_SESSION_TYPE=wayland`) is set, otherwise `x11`. Monitor switching and the `--output`/`--scale`/`--quality`/`--chroma` options behave the same on both.
+
+Not supported yet: **GNOME, KDE Plasma and COSMIC** — they don't implement `wlr-screencopy` (KWin closed their bug as `RESOLVED INTENTIONAL`), so they need the xdg-desktop-portal backend, which isn't implemented.
 
 ### Combining the levers
 
@@ -234,6 +249,21 @@ hyprctl monitors
 
 ```bash
 pkill -f waycast/stream.py
+```
+
+## Project layout
+
+| File | Role |
+|------|------|
+| `stream.py` | HTTP server: auth, MJPEG multipart stream, monitor switching, UI |
+| `backends.py` | capture abstraction: `CaptureBackend` + `WlrBackend` + `X11Backend` + factory/detection |
+| `start.sh` | dependency check, cleanup of previous runs, launches `stream.py` |
+| `tests/` | `unittest` suite (no extra dependency), with fake `wf-recorder`/`ffmpeg` in `tests/bin/` |
+
+Run the tests with:
+
+```bash
+python3 -m unittest discover -s tests
 ```
 
 ## Troubleshooting

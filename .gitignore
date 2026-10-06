@@ -4,10 +4,19 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
 
 # Captures / recordings
 *.mp4
 *.mkv
+*.webm
+*.gif
 *.jpg
 *.jpeg
 
@@ -15,7 +24,14 @@ venv/
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 .DS_Store
 
 # Logs
 *.log
+
+# Temp / partial downloads
+*.tmp
+*.part
+*.part-*

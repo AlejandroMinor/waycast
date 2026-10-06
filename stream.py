@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-import subprocess, socket, threading, os, signal, sys, time, argparse, base64, secrets, re, json, urllib.parse
+import socket, threading, os, signal, sys, time, argparse, base64, secrets, json, urllib.parse
+
+import backends
 
 parser = argparse.ArgumentParser(description='Stream a Wayland desktop to the Meta Quest browser')
 parser.add_argument('--fps',      type=int, default=20,   help='Frames per second (default: 20)')
@@ -11,15 +13,17 @@ parser.add_argument('--sharp',    action='store_true', help='Sharper text (4:4:4
 parser.add_argument('--chroma',   type=str, choices=('420', '422', '444'), default=None,
                     help='Chroma subsampling: 420 = default, 422 = sharper color for ~1.1x data, 444 = full (= --sharp)')
 parser.add_argument('--scale',    type=int, default=None, help='Downscale to this height in px (e.g. 720). Less data = less latency')
+parser.add_argument('--backend',  type=str, choices=('auto', 'wlr', 'x11'), default='auto',
+                    help='Capture backend: auto = detect (default), wlr = wf-recorder, x11 = ffmpeg x11grab')
 args = parser.parse_args()
 
-ENV      = os.environ.copy()
 FPS      = args.fps
 QUALITY  = args.quality
 PORT     = args.port
 PASSWORD = args.password or secrets.token_urlsafe(8)
 CHROMA   = args.chroma or ('444' if args.sharp else '420')
-PIXFMT   = {'420': 'yuvj420p', '422': 'yuvj422p', '444': 'yuvj444p'}[CHROMA]
+BACKEND  = backends.create_backend(args.backend, fps=FPS, quality=QUALITY,
+                                   chroma=CHROMA, scale=args.scale)
 
 latest_frame   = None
 frame_seq      = 0
@@ -27,7 +31,6 @@ frame_cond     = threading.Condition()
 running        = True
 current_output = args.output
 restart_event  = threading.Event()
-current_proc   = None
 mon_lock       = threading.Lock()
 mon_cache      = {'names': None, 'at': 0.0}
 
@@ -61,16 +64,6 @@ def send_401(conn):
         conn.close()
 
 
-def build_cmd():
-    cmd = ['wf-recorder', '-c', 'mjpeg', '-m', 'mpjpeg', '-r', str(FPS), '-D',
-           '-x', PIXFMT, '-p', f'qmin={QUALITY}', '-p', f'qmax={QUALITY}']
-    if args.scale:
-        cmd += ['-F', f'scale=-2:{args.scale}']
-    if current_output:
-        cmd += ['-o', current_output]
-    return cmd + ['-f', '/dev/stdout']
-
-
 def publish(frame):
     global latest_frame, frame_seq
     with frame_cond:
@@ -87,43 +80,18 @@ def await_frame(after_seq, timeout=1.0):
 
 
 def capture_loop():
-    global current_proc
-    print(f'Capturing @ {FPS}fps  quality={QUALITY}  chroma={CHROMA}'
+    print(f'Capturing @ {FPS}fps  quality={QUALITY}  chroma={CHROMA}  backend={BACKEND.name}'
           + (f'  output={current_output}' if current_output else ''))
 
     while running:
-        proc = subprocess.Popen(build_cmd(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, env=ENV, start_new_session=True)
-        current_proc = proc
+        BACKEND.start(current_output)
         try:
-            proc.stdin.write(b'y\n')
-            proc.stdin.close()
-        except OSError:
-            pass
-        buf = b''
-        try:
-            while running and not restart_event.is_set():
-                chunk = proc.stdout.read1(65536)
-                if not chunk:
+            for frame in BACKEND.frames():
+                publish(frame)
+                if not running or restart_event.is_set():
                     break
-                buf += chunk
-                while True:
-                    s = buf.find(b'\xff\xd8')
-                    if s == -1:
-                        buf = buf[-1:] if buf.endswith(b'\xff') else b''
-                        break
-                    e = buf.find(b'\xff\xd9', s + 2)
-                    if e == -1:
-                        buf = buf[s:]
-                        break
-                    publish(buf[s:e + 2])
-                    buf = buf[e + 2:]
         finally:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except Exception:
-                proc.kill()
-            proc.wait()
+            BACKEND.stop()
         if restart_event.is_set():
             restart_event.clear()
             print(f'Switching to output={current_output}')
@@ -137,12 +105,7 @@ def list_monitors(refresh=False):
     with mon_lock:
         if not refresh and mon_cache['names'] is not None and time.monotonic() - mon_cache['at'] < 5.0:
             return mon_cache['names']
-        try:
-            out = subprocess.run(['wf-recorder', '-L'], capture_output=True,
-                                 text=True, env=ENV, timeout=5).stdout
-            names = re.findall(r'Name:\s*(\S+)', out)
-        except Exception:
-            names = None
+        names = BACKEND.list_outputs()
         if names:
             mon_cache['names'] = names
             mon_cache['at'] = time.monotonic()
@@ -150,17 +113,12 @@ def list_monitors(refresh=False):
 
 
 def do_switch(name):
-    global current_output, current_proc
+    global current_output
     if name not in list_monitors() and name not in list_monitors(refresh=True):
         return False
     current_output = name
     restart_event.set()
-    p = current_proc
-    if p is not None:
-        try:
-            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-        except Exception:
-            pass
+    BACKEND.stop()
     return True
 
 
@@ -395,12 +353,7 @@ def shutdown(sig, frame):
     global running
     running = False
     print('\nStopping...')
-    p = current_proc
-    if p is not None:
-        try:
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-        except Exception:
-            pass
+    BACKEND.stop()
     sys.exit(0)
 
 

@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+import sys, os, time, json, hashlib, select
+
+def argv_log():
+    p = os.environ.get('FAKE_ARGV_LOG')
+    if p:
+        with open(p, 'a') as f:
+            f.write(json.dumps(sys.argv[1:]) + '\n')
+
+def stdin_log():
+    p = os.environ.get('FAKE_STDIN_LOG')
+    if not p:
+        return
+    data = b''
+    try:
+        r, _, _ = select.select([0], [], [], 1.0)
+        if r:
+            data = os.read(0, 64)
+    except OSError:
+        pass
+    with open(p, 'ab') as f:
+        f.write(data)
+
+argv_log()
+
+if '-L' in sys.argv:
+    sys.stdout.write('1. Name: SYNTH-A\n2. Name: SYNTH-B\n')
+    sys.exit(0)
+
+stdin_log()
+
+fps = 20.0
+if '-r' in sys.argv:
+    try:
+        fps = float(sys.argv[sys.argv.index('-r') + 1])
+    except (ValueError, IndexError):
+        fps = 20.0
+
+size = int(os.environ.get('FAKE_FRAME_SIZE', 200000))
+split = os.environ.get('FAKE_SPLIT') == '1'
+log_path = os.environ.get('FAKE_LOG')
+
+FILLER = bytes([b % 255 for b in range(64)])
+
+def idx(i):
+    return bytes([(i // k) % 255 for k in (1, 255, 65025, 16581375)])
+
+def make_frame(i):
+    body = FILLER * (size // 64) + FILLER[:size % 64] + idx(i)
+    return b'\xff\xd8' + body + b'\xff\xd9'
+
+period = 1.0 / fps if fps > 0 else 0.05
+i = 0
+t_next = time.monotonic()
+try:
+    while True:
+        frame = make_frame(i)
+        if split:
+            os.write(1, frame[:1])
+            time.sleep(0.03)
+            os.write(1, frame[1:])
+        else:
+            os.write(1, frame)
+        if log_path:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps([time.monotonic(), hashlib.md5(frame).hexdigest(), len(frame)]) + '\n')
+        i += 1
+        t_next += period
+        delay = t_next - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+        else:
+            t_next = time.monotonic()
+except (BrokenPipeError, OSError):
+    sys.exit(0)
