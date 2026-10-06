@@ -7,7 +7,9 @@ parser.add_argument('--quality',  type=int, default=4,    help='MJPEG quality 1=
 parser.add_argument('--port',     type=int, default=8080, help='HTTP port (default: 8080)')
 parser.add_argument('--output',   type=str, default=None, help='Monitor to capture, e.g. eDP-1, HDMI-A-1')
 parser.add_argument('--password', type=str, default=None, help='Access password (one is generated if omitted)')
-parser.add_argument('--sharp',    action='store_true', help='Sharper text (4:4:4) at the cost of ~2x data and more latency')
+parser.add_argument('--sharp',    action='store_true', help='Sharper text (4:4:4) at the cost of ~1.4x data and more latency')
+parser.add_argument('--chroma',   type=str, choices=('420', '422', '444'), default=None,
+                    help='Chroma subsampling: 420 = default, 422 = sharper color for ~1.1x data, 444 = full (= --sharp)')
 parser.add_argument('--scale',    type=int, default=None, help='Downscale to this height in px (e.g. 720). Less data = less latency')
 args = parser.parse_args()
 
@@ -16,14 +18,18 @@ FPS      = args.fps
 QUALITY  = args.quality
 PORT     = args.port
 PASSWORD = args.password or secrets.token_urlsafe(8)
+CHROMA   = args.chroma or ('444' if args.sharp else '420')
+PIXFMT   = {'420': 'yuvj420p', '422': 'yuvj422p', '444': 'yuvj444p'}[CHROMA]
 
 latest_frame   = None
-frame_lock     = threading.Lock()
-frame_event    = threading.Event()
+frame_seq      = 0
+frame_cond     = threading.Condition()
 running        = True
 current_output = args.output
 restart_event  = threading.Event()
 current_proc   = None
+mon_lock       = threading.Lock()
+mon_cache      = {'names': None, 'at': 0.0}
 
 
 def check_auth(raw):
@@ -56,46 +62,61 @@ def send_401(conn):
 
 
 def build_cmd():
-    output_flag = f'-o {current_output} ' if current_output else ''
-    pixfmt = 'yuvj444p' if args.sharp else 'yuvj420p'
-    scale_flag = f'-F scale=-2:{args.scale} ' if args.scale else ''
-    return (
-        f'echo y | wf-recorder -c mjpeg -m mpjpeg -r {FPS} -D '
-        f'{scale_flag}-x {pixfmt} -p qmin={QUALITY} -p qmax={QUALITY} '
-        f'{output_flag}-f /dev/stdout 2>/dev/null'
-    )
+    cmd = ['wf-recorder', '-c', 'mjpeg', '-m', 'mpjpeg', '-r', str(FPS), '-D',
+           '-x', PIXFMT, '-p', f'qmin={QUALITY}', '-p', f'qmax={QUALITY}']
+    if args.scale:
+        cmd += ['-F', f'scale=-2:{args.scale}']
+    if current_output:
+        cmd += ['-o', current_output]
+    return cmd + ['-f', '/dev/stdout']
+
+
+def publish(frame):
+    global latest_frame, frame_seq
+    with frame_cond:
+        latest_frame = frame
+        frame_seq += 1
+        frame_cond.notify_all()
+
+
+def await_frame(after_seq, timeout=1.0):
+    with frame_cond:
+        if frame_seq == after_seq:
+            frame_cond.wait(timeout)
+        return frame_seq, latest_frame
 
 
 def capture_loop():
-    global latest_frame, current_proc
-    print(f'Capturing @ {FPS}fps  quality={QUALITY}'
+    global current_proc
+    print(f'Capturing @ {FPS}fps  quality={QUALITY}  chroma={CHROMA}'
           + (f'  output={current_output}' if current_output else ''))
 
     while running:
-        cmd = build_cmd()
-        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
-                                preexec_fn=os.setsid, env=ENV)
+        proc = subprocess.Popen(build_cmd(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, env=ENV, start_new_session=True)
         current_proc = proc
+        try:
+            proc.stdin.write(b'y\n')
+            proc.stdin.close()
+        except OSError:
+            pass
         buf = b''
         try:
             while running and not restart_event.is_set():
-                chunk = proc.stdout.read(65536)
+                chunk = proc.stdout.read1(65536)
                 if not chunk:
                     break
                 buf += chunk
                 while True:
                     s = buf.find(b'\xff\xd8')
                     if s == -1:
-                        buf = b''
+                        buf = buf[-1:] if buf.endswith(b'\xff') else b''
                         break
                     e = buf.find(b'\xff\xd9', s + 2)
                     if e == -1:
                         buf = buf[s:]
                         break
-                    with frame_lock:
-                        latest_frame = buf[s:e + 2]
-                    frame_event.set()
-                    frame_event.clear()
+                    publish(buf[s:e + 2])
                     buf = buf[e + 2:]
         finally:
             try:
@@ -112,18 +133,25 @@ def capture_loop():
             time.sleep(1)
 
 
-def list_monitors():
-    try:
-        out = subprocess.run(['wf-recorder', '-L'], capture_output=True,
-                             text=True, env=ENV, timeout=5).stdout
-        return re.findall(r'Name:\s*(\S+)', out)
-    except Exception:
-        return []
+def list_monitors(refresh=False):
+    with mon_lock:
+        if not refresh and mon_cache['names'] is not None and time.monotonic() - mon_cache['at'] < 5.0:
+            return mon_cache['names']
+        try:
+            out = subprocess.run(['wf-recorder', '-L'], capture_output=True,
+                                 text=True, env=ENV, timeout=5).stdout
+            names = re.findall(r'Name:\s*(\S+)', out)
+        except Exception:
+            names = None
+        if names:
+            mon_cache['names'] = names
+            mon_cache['at'] = time.monotonic()
+        return mon_cache['names'] or []
 
 
 def do_switch(name):
     global current_output, current_proc
-    if name not in list_monitors():
+    if name not in list_monitors() and name not in list_monitors(refresh=True):
         return False
     current_output = name
     restart_event.set()
@@ -136,12 +164,19 @@ def do_switch(name):
     return True
 
 
+def tune_send_buffer(conn, frame_size):
+    try:
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF,
+                        max(32 * 1024, min(frame_size, 128 * 1024)))
+    except OSError:
+        pass
+
+
 def stream_client(conn):
     try:
         try:
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 256 * 1024)
-        except Exception:
+        except OSError:
             pass
         conn.sendall(
             b'HTTP/1.1 200 OK\r\n'
@@ -149,19 +184,21 @@ def stream_client(conn):
             b'Cache-Control: no-cache\r\n'
             b'Connection: close\r\n\r\n'
         )
-        last = None
+        sent_seq = 0
+        tuned = False
         while True:
-            frame_event.wait(timeout=1.0)
-            with frame_lock:
-                frame = latest_frame
-            if frame is None or frame is last:
+            seq, frame = await_frame(sent_seq)
+            if frame is None or seq == sent_seq:
                 continue
-            last = frame
+            if not tuned:
+                tune_send_buffer(conn, len(frame))
+                tuned = True
             hdr = (
                 f'--frame\r\nContent-Type: image/jpeg\r\n'
                 f'Content-Length: {len(frame)}\r\n\r\n'
             ).encode()
             conn.sendall(hdr + frame + b'\r\n')
+            sent_seq = seq
     except Exception:
         pass
     finally:
