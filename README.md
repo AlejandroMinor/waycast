@@ -1,295 +1,114 @@
 # waycast
 
-Stream your Wayland desktop to any browser over the local network, built for the Meta Quest headset browser, but works anywhere. Nothing to install on the client.
+Stream your Linux desktop to any browser over the local network. Built for the Meta Quest browser, works anywhere. Nothing to install on the client.
 
-Works on **any wlroots-based compositor**: Hyprland, Sway, river, Wayfire, etc. (it uses the `wlr-screencopy` protocol via `wf-recorder`, nothing compositor-specific).
+It captures with `wf-recorder` (wlroots compositors: Hyprland, Sway, river, labwc, Wayfire) or `ffmpeg` (X11) and serves MJPEG over HTTP with a password. Low latency (~60 ms measured on the same machine, before Wi-Fi and headset decoding), live monitor switching, Python stdlib only.
 
-## How it works
+Setup is minimal: run one script and open a URL. No client app, no pairing.
 
-```
-Wayland (wlroots), wf-recorder (native MJPEG), HTTP server, any browser
-```
-
-A single capture process, no ffmpeg subprocess per frame; `wf-recorder` encodes MJPEG directly for minimal latency. A tiny Python server (stdlib only) serves a `multipart/x-mixed-replace` MJPEG stream that any browser can open, including the one built into the Quest.
-
-## Features
-
-- **Low latency**: direct MJPEG, no transcoding, `TCP_NODELAY` + small send buffer so stale frames get skipped instead of queued.
-- **Tunable**: `--fps`, `--quality`, `--scale`, `--chroma`, `--sharp` to trade quality for latency.
-- **Live monitor switching**: pick the output from the web page, no reload, near-instant.
-- **Password protected**: HTTP Basic auth, random password by default.
-- **Single dependency**: `wf-recorder` (plus Python stdlib). No npm, no install on the headset.
-
-## Requirements & installation
+## Requirements
 
 | | Needs |
 |---|---|
-| **OS** | Linux with either a wlroots Wayland compositor (Hyprland, Sway, river, labwc, Wayfire, …) or an X11 session (`--backend x11`). **GNOME, KDE Plasma and COSMIC are not supported**: they don't implement `wlr-screencopy`, the protocol the `wlr` backend captures through. The distro doesn't matter, the compositor does. |
-| **Capture** | `wf-recorder` (tested with 0.6.0; any version where `wf-recorder -L` works) for `wlr`, or `ffmpeg` for `x11` |
-| **Server** | Python ≥ 3.8 (stdlib only, nothing to `pip install`) |
-| **Client** | Any browser that plays MJPEG: Chrome / Edge / Firefox and the Meta Quest browser |
-| **Network** | Quest and PC on the same LAN; 5 GHz Wi-Fi recommended |
+| **PC** | Linux with a wlroots compositor or an X11 session. GNOME, KDE Plasma and COSMIC are **not supported** (no `wlr-screencopy`) |
+| **Capture tool** | `wf-recorder` (Wayland) or `ffmpeg` (X11) |
+| **Server** | Python 3.8+ (no `pip install`) |
+| **Client** | Any browser: Quest, Chrome, Edge, Firefox |
+| **Network** | PC and headset on the same LAN, 5 GHz Wi-Fi recommended |
 
-Install `wf-recorder` from your package manager (Python 3 is almost always already there):
-
-| Distro | Command |
-|---|---|
-| Arch / Manjaro / CachyOS | `sudo pacman -S wf-recorder python` |
-| Fedora | `sudo dnf install wf-recorder python3` |
-| Debian 13+ / Ubuntu 24.04+ | `sudo apt install wf-recorder python3` |
-| Alpine / Void / Nix | `apk add wf-recorder`, `xbps-install -S wf-recorder`, `nix shell nixpkgs#wf-recorder` |
-
-> Old releases may ship a `wf-recorder` too old to list outputs (Ubuntu 22.04 has 0.2.x, which predates `-L`). In that case build it from source: https://github.com/ammen99/wf-recorder
-
-Verify before running:
+## Install
 
 ```bash
-wf-recorder -L        # must print your outputs, e.g. DP-1, HDMI-A-1
-python3 --version     # 3.8 or newer
+git clone https://github.com/AlejandroMinor/waycast.git
+cd waycast
 ```
 
-`start.sh` does this check for you and aborts with a clear message if something is missing.
+Arch:
 
-## How to run
+```bash
+sudo pacman -S wf-recorder python
+```
+
+Fedora:
+
+```bash
+sudo dnf install wf-recorder python3
+```
+
+Debian 13+ / Ubuntu 24.04+:
+
+```bash
+sudo apt install wf-recorder python3
+```
+
+`start.sh` checks the dependencies on launch and tells you what is missing.
+
+## Start
 
 ```bash
 ./start.sh
 ```
 
-The terminal prints the URL and an auto-generated password. Open the URL in the Quest browser:
+The terminal prints the URL and a random password. Open it in the Quest browser:
 
 ```
-http://<your-local-ip>:8080
+http://<your-pc-ip>:8080
 ```
 
-The Quest and your PC must be on the same Wi-Fi network. `start.sh` checks the dependencies, kills any previous instance, and launches `stream.py`, forwarding any arguments you pass.
+For example, if your PC is `192.168.1.50`:
 
-## Parameters
+```
+http://192.168.1.50:8080
+```
+
+Find your IP with `ip -4 addr` (look for `inet 192.168...` on your Wi-Fi or Ethernet interface).
+
+Stop with `Ctrl+C`. Some common setups:
 
 ```bash
-./start.sh [--fps N] [--quality N] [--port N] [--output NAME] [--scale N] [--chroma 420|422|444] [--sharp] [--password PASS] [--backend auto|wlr|x11]
+./start.sh --password mysecret                    # fixed password
+./start.sh --output HDMI-A-1                      # pick a monitor
+./start.sh --scale 720 --fps 15 --quality 8       # weak Wi-Fi, less latency
+./start.sh --chroma 444 --quality 2 --fps 25      # crispest text
 ```
 
-| Parameter      | Default      | Description                                          |
-|----------------|--------------|------------------------------------------------------|
-| `--fps`        | `20`         | Frames per second                                    |
-| `--quality`    | `4`          | MJPEG quality (quantizer): 1 = best/heavy, 31 = worst |
-| `--port`       | `8080`       | HTTP port                                            |
-| `--output`     | first monitor| Monitor to capture (e.g. `eDP-1`, `HDMI-A-1`)        |
-| `--scale`      | native       | Downscale to this height in px (e.g. `720`). Less data = less latency |
-| `--chroma`     | `420`        | Chroma subsampling: `420` default, `422` sharper color (+12% data), `444` full (= `--sharp`) |
-| `--sharp`      | off          | Alias for `--chroma 444`: sharpest text at the cost of ~35% more data |
-| `--password`   | random       | Access password for the stream                       |
-| `--backend`    | `auto`       | Capture backend: `auto` = detect, `wlr` = wf-recorder, `x11` = ffmpeg x11grab |
+> **Local network only.** It serves plain HTTP with Basic auth, so the password is not encrypted. Never expose the port to the internet; use SSH or a VPN for remote access.
 
-If you don't pass `--password`, one is generated automatically and shown in the terminal at startup.
+## Options
 
-> **Security: local network only.** This serves over plain HTTP, so the password travels Base64-encoded but **unencrypted** (HTTP Basic auth). It's meant for your own trusted LAN. Don't expose port `8080` to the internet or forward it through your router; anyone on the path could read the stream and the password. If you ever need remote access, tunnel it (e.g. over SSH or a VPN) instead of opening the port.
+```bash
+./start.sh [--fps N] [--quality N] [--port N] [--output NAME] [--scale N]
+           [--chroma 420|422|444] [--sharp] [--password PASS] [--backend auto|wlr|x11]
+```
 
-> **Note on `--quality`:** the real control is the encoder's `qmin`/`qmax` quantizer. The `qscale` option many examples use is **ignored** by ffmpeg's MJPEG encoder; that's why changing it has no effect.
-
-### `--quality` (image compression)
-
-It's a quantizer, so it works inversely to what you'd expect:
-
-| Value  | Quality      | Weight / latency        |
-|--------|--------------|-------------------------|
-| `1`    | best         | heavy, more latency     |
-| `4`    | good (default) | balanced              |
-| `8-10` | acceptable   | light, less latency     |
-| `31`   | worst        | minimal                 |
-
-Rule: **lower number = looks better but weighs more** (more latency). **Higher number = looks worse but runs smoother.**
-
-### `--scale` (resolution)
-
-The value is the final **height in pixels**; the width is computed automatically, keeping your screen's aspect ratio (it uses the ffmpeg filter `scale=-2:N`, where `-2` means "auto, even width"). For a native 1920x1080 screen:
-
-| `--scale` | Actual resolution | Use                                   |
-|-----------|-------------------|---------------------------------------|
-| (unset)   | 1920x1080         | native, sharpest, most data           |
-| `900`     | 1600x900          | slight reduction, good balance        |
-| `720`     | 1280x720          | ~half the data, recommended for latency |
-| `540`     | 960x540           | very light, noticeably soft           |
-| `480`     | 854x480           | minimum, only if Wi-Fi is bad         |
-
-Useful range: **480 to 1080**. Don't go above your native height (1080), since it adds no detail, just inflates the data. This is the strongest lever against latency because it attacks the root cause (amount of data), not just compression.
-
-### `--chroma` (color sharpness)
-
-JPEG stores chroma subsampled; that's what makes colored text edges and thin UI lines look soft. `--chroma` picks the mode wf-recorder encodes with (the pixel format passed as `-x`):
-
-| Value  | Pixel format | Data vs `420` | Best for |
-|--------|--------------|---------------|----------|
-| `420`  | `yuvj420p`   | baseline (default) | general use |
-| `422`  | `yuvj422p`   | **+12%**      | sharper colored text, small cost |
-| `444`  | `yuvj444p`   | **+35%**      | crisp text (`--sharp` is an alias for this) |
-
-Measured at 1920x1080, `--quality 4`: 284 KB, 318 KB, 383 KB per frame. More data means more latency over Wi-Fi, so prefer `420`/`422` unless text sharpness matters more than responsiveness.
-
-### `--fps` (frames per second)
-
-Each frame is a full JPEG, so the cost is direct: **double the fps = double the data per second** (`data/sec ≈ frame_size × fps`). It doesn't change how sharp the image looks, only how many frames you send.
-
-| `--fps` | Feel                                   | Data (2560x1440, q4) |
-|---------|----------------------------------------|----------|
-| `10`    | choppy, fine for reading/static text   | ~20 Mbps |
-| `15`    | smooth for desktop/code                | ~29 Mbps |
-| `20`    | smooth, the default                    | ~40 Mbps |
-| `25`    | smoother scrolling and mouse           | ~48 Mbps |
-| `30`    | smooth motion, still light             | ~56 Mbps |
-
-Useful range: **10 to 30**. Measured here: `wf-recorder` sustains 29.8 fps at `-r 30` (19.8 at `-r 20`), and the cost is mostly data, not CPU (226% vs 216% of a single core; the capture itself dominates). The figures above are for a mostly static desktop; **screen content matters more than anything else here**: a text-heavy screen at 20 fps costs ~70 Mbps and at 30 fps ~85 Mbps. Even the worst case stays around 15-20% of a 600 Mbps 5 GHz link.
-
-### `--backend` (capture backend)
-
-Capture is abstracted behind a `CaptureBackend` interface (`backends.py`), so the server does not depend on a single tool:
-
-| Value  | Capturer | Needs | Works on |
-|--------|----------|-------|----------|
-| `auto` | detect from the environment (default) | - | - |
-| `wlr`  | `wf-recorder` over `wlr-screencopy` | `wf-recorder` | Hyprland, Sway, river, labwc, Wayfire |
-| `x11`  | `ffmpeg -f x11grab`, MJPEG pipe | `ffmpeg` | any X11 session |
-
-`auto` picks `wlr` when `WAYLAND_DISPLAY` (or `XDG_SESSION_TYPE=wayland`) is set, otherwise `x11`. Monitor switching and the `--output`/`--scale`/`--quality`/`--chroma` options behave the same on both.
-
-Not supported yet: **GNOME, KDE Plasma and COSMIC**: they don't implement `wlr-screencopy` (KWin closed their bug as `RESOLVED INTENTIONAL`), so they need the xdg-desktop-portal backend, which isn't implemented.
-
-### Combining the levers
-
-All three reduce latency through different paths:
-
-| Lever              | What it reduces            |
-|--------------------|----------------------------|
-| `--scale`          | pixels per frame (strongest) |
-| `--fps`            | frames per second          |
-| `--quality` (raise number) | weight of each frame (compression) |
-
-Simple rule: if there's latency, lower **scale** first (most impact), then **fps**, and lastly raise the **quality** number.
-
-### Where the latency goes
-
-Measured on this machine (native capture, `--fps 20 --quality 4`, client on the same host):
-
-| Stage | Time |
-|---|---|
-| `wf-recorder` capture + MJPEG encode (frame complete in the pipe) | **~85 ms** |
-| server parse, publish, TCP send, client receive | **~1 ms** |
-| browser decode/render | client side |
-
-The server part is a rounding error: each frame is published as soon as its bytes arrive (no waiting for the next frame, no missed wakeups between frames) and the socket send buffer only holds 1-2 frames. So end-to-end latency is essentially **the capture floor plus the network**, and the levers below (`--scale`, `--quality`, `--fps`) are what actually move it.
-
-### Live monitor switching
-
-With more than one monitor connected, the web page shows **buttons centered at the top** to switch monitors without reloading or taking off the headset. The capture restarts on the fly, near-instantly (~0.2-0.3s), and works even on a static/idle monitor (no need to move anything on it first).
-
-> The buttons only appear when 2+ monitors are detected. With a single monitor the bar is hidden so it doesn't get in the way. You can also pick the monitor at launch with `--output`.
-
-Only one monitor is captured at a time (one `wf-recorder` process), so switching costs nothing extra in CPU or bandwidth; it just relaunches the capture on the chosen output.
-
-### On-screen controls
-
-All controls are nearly invisible by default and fade in on hover, so they don't obstruct the stream.
-
-| Button | Position | Action |
-|--------|----------|--------|
-| Eye icon | top-left | Hide / show all controls (toggle) |
-| Monitor buttons | top-center | Switch monitor (only shown with 2+ monitors) |
-| Fullscreen icon | top-right | Enter fullscreen; changes to an exit icon while in fullscreen |
-
-When controls are hidden via the eye button, the eye itself stays slightly visible so you can bring them back.
-
-## Examples
-
-Start from the row that matches what you're doing; these are the setups worth actually using:
-
-| Use case | Command | Data (measured) |
+| Option | Default | Description |
 |---|---|---|
-| Everyday / balanced | `./start.sh` | ~40-70 Mbps |
-| Reading, static text, weak Wi-Fi | `./start.sh --fps 15 --quality 6` | ~35 Mbps |
-| **Programming from the headset** (crispest text) | `./start.sh --chroma 444 --quality 2 --fps 25` | ~70-125 Mbps |
-| Maximum smoothness (scroll, video, motion) | `./start.sh --fps 30` | ~56-85 Mbps |
-| Crowded / slow Wi-Fi | `./start.sh --scale 720 --fps 15 --quality 8` | ~10 Mbps |
+| `--fps` | `20` | Frames per second (useful range 10-30) |
+| `--quality` | `4` | JPEG quantizer: 1 = best/heaviest, 31 = worst/lightest |
+| `--scale` | native | Final height in px (e.g. `720`); width keeps the aspect ratio |
+| `--chroma` | `420` | Color subsampling: `420`, `422` (+12% data), `444` (+35% data) |
+| `--sharp` | off | Alias for `--chroma 444` |
+| `--output` | first monitor | Monitor to capture (`wf-recorder -L` or `hyprctl monitors` to list) |
+| `--port` | `8080` | HTTP port |
+| `--password` | random | Stream password |
+| `--backend` | `auto` | `wlr` (wf-recorder), `x11` (ffmpeg x11grab), or detect from the session |
 
-*Measured at native 2560x1440, so a 1080p screen uses roughly half. The range is screen content: a mostly static desktop at the low end, a text-heavy screen at the high end (text is the expensive case for JPEG). Everything above fits a 600 Mbps 5 GHz link with room to spare.*
+## Documentation
 
-Pick your monitor with `--output` (or from the buttons in the page), and fix the password with `--password` so it doesn't change on every launch.
+Once it runs, for tweaking it or when something goes wrong, everything is in [docs/USAGE.md](docs/USAGE.md):
 
-```bash
-# Fixed password
-./start.sh --password mysecret
+| I want to... | Read |
+|---|---|
+| Reduce lag or get sharper text | [Tuning latency vs quality](docs/USAGE.md#tuning-latency-vs-quality) |
+| Switch monitors or go fullscreen from the headset | [On-screen controls](docs/USAGE.md#on-screen-controls) |
+| Understand how it works and where the latency comes from | [How it works](docs/USAGE.md#how-it-works-and-where-the-latency-goes) |
+| Fix a black screen, wrong monitor or growing lag | [Troubleshooting](docs/USAGE.md#troubleshooting) |
+| Know what each file does | [Project layout](docs/USAGE.md#project-layout-and-tests) |
 
-# Maximum quality
-./start.sh --quality 2 --fps 15
-
-# More fluidity, reduced quality
-./start.sh --fps 25 --quality 7
-
-# External monitor
-./start.sh --output HDMI-A-1
-
-# Minimum latency (lower resolution + fewer fps + lighter quality)
-./start.sh --scale 720 --fps 15 --quality 8
-
-# Smooth balance if your Wi-Fi is good
-./start.sh --scale 900 --fps 20 --quality 4
-```
-
-To list your monitor names:
-
-```bash
-wf-recorder -L
-# or also:
-hyprctl monitors
-```
-
-## Stopping
-
-`Ctrl+C` in the terminal, or:
-
-```bash
-pkill -f waycast/stream.py
-```
-
-## Project layout
-
-| File | Role |
-|------|------|
-| `stream.py` | HTTP server: auth, MJPEG multipart stream, monitor switching, UI |
-| `backends.py` | capture abstraction: `CaptureBackend` + `WlrBackend` + `X11Backend` + factory/detection |
-| `start.sh` | dependency check, cleanup of previous runs, launches `stream.py` |
-| `tests/` | `unittest` suite (no extra dependency), with fake `wf-recorder`/`ffmpeg` in `tests/bin/` |
-
-Run the tests with:
+## Development
 
 ```bash
 python3 -m unittest discover -s tests
 ```
 
-## Troubleshooting
-
-**Black screen when opening the URL**
-Run `./start.sh` from a terminal inside your Wayland session. Make sure `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` are set; it won't work over SSH without display forwarding.
-
-**High latency / the image keeps falling further behind**
-With MJPEG over TCP, if Wi-Fi can't keep up the frames pile up and latency grows without bound. In order of impact:
-1. `--scale 720` (or `--scale 900`): lower the resolution, the biggest data saving.
-2. `--quality 8` or higher: lighter frames.
-3. `--fps 15`: fewer frames per second.
-4. Move the PC closer to the router or use 5 GHz.
-
-Typical combo: `./start.sh --scale 720 --fps 15 --quality 8`
-
-**Low quality / blurry text**
-Lower `--quality` (e.g. `--quality 2`) for better quality, and add `--chroma 422` (sharper colored text, +12% data) or `--sharp`/`--chroma 444` (crispest, +35% data). Note both increase data and latency.
-
-**I want to capture a specific monitor**
-Use `--output` with the monitor name, or switch live from the monitor buttons at the top of the page. Run `wf-recorder -L` to see the available outputs.
-
-**Black screen / wrong monitor / it shows the same after switching**
-This means more than one `wf-recorder` is capturing at once (leftover processes from previous runs). On wlroots, multiple simultaneous captures fight over the screen and the newest one gets no frames. `start.sh` now cleans up orphaned captures on launch, and the server kills its own capture on exit, so this shouldn't recur. To check/clean up manually:
-
-```bash
-pgrep -af "wf-recorder -c mjpeg"        # list capture processes (should be 1)
-pkill -f "wf-recorder -c mjpeg -m mpjpeg"  # kill leftovers, then relaunch
-```
+No extra dependencies; the tests use fake `wf-recorder` and `ffmpeg` from `tests/bin/`.
